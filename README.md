@@ -29,12 +29,12 @@
 ### 邊緣端開發環境（Embedded C/C++）
 * **工具鏈**：VS Code 搭配 CMake 建置系統與 GCC ARM Embedded Toolchain (arm-none-eabi-gcc)。
 * **配置與底層驅動**：STM32CubeMX（用於硬體腳位、時脈樹及外設硬體初始化代碼生成）。
-* **AI 推論引擎**：X-CUBE-AI v10.2.0（ST 官方最佳化微型神經網路推論運行時庫，自動對接 ARM CMSIS-NN 硬體加速庫）。
+* **AI 推論**：X-CUBE-AI v10.2.0（ST 官方最佳化微型神經網路推論運行時庫，自動對接 ARM CMSIS-NN 硬體加速庫）。
 * **OLED 驅動庫**：基於 STM32 HAL 封裝的開源 `stm32-ssd1306` 函式庫（包含字體支援庫 `ssd1306_fonts`）。
 
 ### 主機端開發環境（Python Data Science）
 * **語言版本**：Python 3
-* **關鍵資料庫**：
+* **資料庫**：
     * `TensorFlow / Keras`：用於神經網路模型的設計、訓練及 TFLite 格式匯出。
     * `Pandas` & `NumPy`：用於資料清洗、時序滑動視窗切片與數學矩陣運算。
     * `Matplotlib` & `Scikit-learn`：用於數據視覺化分析以及資料 MinMaxScaler 正規化處理。
@@ -45,8 +45,8 @@
 
 ### 階段一與階段二：硬體配置、序列化與時序數據採集
 1.  **硬體配置**：於 STM32CubeMX 中啟用 I2C1（標準模式 100kHz）與 USART2（115200 bps）。
-2.  **重定向 printf**：在 `main.c` 中重寫 `_write` 函式，將標準輸出重定向至 `HAL_UART_Transmit`，實現透過序列埠向主機發送數據。
-3.  **數據採集**：編寫 Python 腳本 `data_logger.py`，透過串列埠以 50 毫秒（20 Hz）為採樣間隔，分別錄製馬達平穩運轉時的「正常數據（normal_vibration.csv）」與模擬撞擊、軸承卡頓等狀態下的「異常數據（abnormal_vibration.csv）」，每份數據各採集 500 筆樣本。
+2.  **printf**：在 `main.c` 中重寫 `_write` 函式，將標準輸出重定向至 `HAL_UART_Transmit`，實現透過序列埠向主機發送數據。
+3.  **數據採集**：透過串列埠以 50 毫秒（20 Hz）為採樣間隔，分別錄製馬達平穩運轉時的「正常數據（normal_vibration.csv）」與模擬撞擊、軸承卡頓等狀態下的「異常數據（abnormal_vibration.csv）」，每份數據各採集 500 筆樣本。
 
 ### 階段三與階段四：模型架構設計、訓練、量化與評估
 1.  **時序前處理**：
@@ -70,9 +70,9 @@
 
 ---
 
-## 4. 關鍵技術挑戰與解決方案（除錯紀錄）
+## 4. 除錯紀錄
 
-在落地部署過程中，本專案克服了多項微控制器底層與硬體物理特性的關鍵 Bug：
+在落地部署過程中，本專案遇到了多項微控制器底層與硬體物理特性的 Bug：
 
 ### 記憶體對齊錯誤（UsageFault / HardFault）
 * **技術技術問題**：ARM Cortex-M4 的 DSP 指令集在執行矩陣平行運算時，要求操作數的記憶體位址必須嚴格對齊。若未對齊，會在第二次推論時觸發硬體錯誤。
@@ -90,13 +90,7 @@
 * **技術問題**：為了縮減程式碼體積，STM32 的 GCC 輕量化標準庫（newlib-nano）預設關閉了 `printf` 輸出浮點數（`%f`）的功能，導致除錯時無法在終端機觀察分數變化。
 * **解決方案**：在 C 語言端採用整數放大法。將計算出的 `mse_score` 與 `ANOMALY_THRESHOLD` 同時乘以 10000.0f 並強轉為 `int` 型態，以 `分数 / 10000` 的整數形式透過 `%d` 順利輸出，避開了底層限制。
 
-### 高頻震動下的 I2C 通訊當機與死鎖
-* **技術問題**：馬達在劇烈震動或遭受物理撞擊時，麵包板上的杜邦線極易產生暫時性接觸不良。這會干擾 I2C 的時脈訊號，導致 STM32 的 I2C 狀態機陷入無限等待的死鎖狀態（Deadlock），導致整顆 MCU 鎖死。
-* **解決方案**：在 `HAL_I2C_Mem_Read` 週邊讀取語句中加入錯誤攔截。一旦通訊返回值不為 `HAL_OK`，不允許程式鎖死，而是立即執行暴力救援機制：呼叫 `HAL_I2C_DeInit()` 關閉週邊，延時 10ms 後執行 `HAL_I2C_Init()` 重新初始化 I2C1 暫存器並跳過當前週期，成功實現具備自癒能力的工業級防震韌體。
 
-### OLED 狀態未同步與冷開機重置
-* **技術問題**：引入共享 I2C 匯流排的 SSD1306 螢幕後，在反覆進行編譯燒錄（Flash）時，由於 MCU 的 3.3V 電源不中斷，OLED 內部的控制器未經歷硬體重置，常卡在錯誤的通訊時序中，導致序列埠輸出正常但螢幕保持全黑。
-* **解決方案**：利用物理冷開機（Hard Reset）機制。在程式燒錄完成後，完全拔除 Nucleo 板的 USB 傳輸線，切斷整體電路供電並等待 3 秒，確保 OLED 晶片電容完全放電。重新上電後，螢幕的 I2C 狀態成功與 MCU 同步，順利顯示即時監控畫面。
 
 ---
 
@@ -115,18 +109,19 @@
    記錄終端機輸出的最大最小值，並將其填入 main.c 中的 MinMaxScaler 參數 區塊。
 2. 執行神經網路訓練與 TFLite 轉換腳本：
 
-Bash
-py train_model.py
-
-確認生成 model.tflite。
+   ```bash
+   py train_model.py
+   ```
+       
+   確認生成 model.tflite。
 
 ### 步驟三：邊緣端建置與燒錄
-打開 STM32CubeMX，載入 .ioc 設定檔，匯入 model.tflite，確認分析無誤後點擊 GENERATE CODE。
+1. 打開 STM32CubeMX，載入 .ioc 設定檔，匯入 model.tflite，確認分析無誤後點擊 GENERATE CODE。
 
-使用 VS Code 打開專案。按下 Ctrl + Shift + P 執行 CMake: Delete Cache and Reconfigure。
+2. 使用 VS Code 打開專案。按下 Ctrl + Shift + P 執行 CMake: Delete Cache and Reconfigure。
 
-確認 CMakeLists.txt 中已將 Core/Src/ssd1306.c 與 Core/Src/ssd1306_fonts.c 包含於 target_sources 內。
+3. 確認 CMakeLists.txt 中已將 Core/Src/ssd1306.c 與 Core/Src/ssd1306_fonts.c 包含於 target_sources 內。
 
-點擊底部的 Build 進行編譯，編譯通過後點擊 Flash 進行燒錄。
+4. 點擊底部的 Build 進行編譯，編譯通過後點擊 Flash 進行燒錄。
 
-斷開 USB 連接線進行硬體冷開機，隨後重新通電，即可在 OLED 螢幕上實時觀測馬達運轉狀態與 AI 異常分數。
+5. 斷開 USB 連接線進行硬體冷開機，隨後重新通電，即可在 OLED 螢幕上實時觀測馬達運轉狀態與 AI 異常分數。
