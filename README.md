@@ -1,11 +1,27 @@
+# 基于 TinyML 的馬達震動異常偵測系統
+
+本專案實現了一個完整的邊緣人工智慧（Edge AI / TinyML）端到端系統，部署於 STM32F446RE 微控制器上。系統透過 I2C 介面即時採集 MPU6500 六軸感測器的三軸加速度訊號，利用滑動視窗（Sliding Window）擷取時序特徵，並運行經過量化壓縮的自編碼器（Autoencoder）神經網路模型。藉由計算輸入訊號與重建訊號之間的均方誤差（MSE）作為異常分數，系統能即時判斷馬達運轉狀態（NORMAL / ABNORMAL），並將狀態與異常分數即時顯示於 SSD1306 OLED 螢幕上。
+
+---
+
+## 1. 系統架構與硬體元件
+
+### 硬體元件
+* **微控制器（MCU）**：STMicroelectronics Nucleo-F446RE（搭載 ARM Cortex-M4 核心，具備硬體浮點運算單元 FPU 及 DSP 指令集，時脈 180 MHz，內建 512 KB Flash、128 KB SRAM）。
+* **感測器**：MPU6500 六軸慣性測量單元（IMU），本專案使用其三軸加速度計功能，配置為預設量程，透過 I2C1 匯流排進行通訊。
+* **顯示模組**：0.96 吋 SSD1306 OLED 螢幕（解析度 128x64），與 MPU6500 共用 I2C1 匯流排，硬體位址為 0x3C（經左移後為 0x78）。
+
+### 系統通訊拓撲
+```text
 [ STM32F446RE (Master) ]
-│
-├── I2C1 Bus ─────────────────┬──────────────────┐
-│                             │                  │
-│                      [ MPU6500 (Slave) ] [ SSD1306 OLED (Slave) ]
-│                      位址: 0x68 << 1      位址: 0x3C << 1
-│
-└── UART2 (115200 bps) ──> [ PC 終端機 ] (資料採集與除錯輸出)
+       │
+       ├── I2C1 Bus ─────────────────┬──────────────────┐
+       │                             │                  │
+       │                      [ MPU6500 (Slave) ] [ SSD1306 OLED (Slave) ]
+       │                      位址: 0x68 << 1      位址: 0x3C << 1
+       │
+       └── UART2 (115200 bps) ──> [ PC 終端機 ] (資料採集與除錯輸出)
+```
 ---
 
 ## 2. 軟體環境與第三方函式庫
@@ -95,6 +111,7 @@
 1. 進入 `python/` 資料夾，執行極值分析腳本：
    ```bash
    py find_min_max.py
+   ```
    記錄終端機輸出的最大最小值，並將其填入 main.c 中的 MinMaxScaler 參數 區塊。
 2. 執行神經網路訓練與 TFLite 轉換腳本：
 
@@ -103,7 +120,7 @@ py train_model.py
 
 確認生成 model.tflite。
 
-步驟三：邊緣端建置與燒錄
+### 步驟三：邊緣端建置與燒錄
 打開 STM32CubeMX，載入 .ioc 設定檔，匯入 model.tflite，確認分析無誤後點擊 GENERATE CODE。
 
 使用 VS Code 打開專案。按下 Ctrl + Shift + P 執行 CMake: Delete Cache and Reconfigure。
@@ -113,4 +130,3 @@ py train_model.py
 點擊底部的 Build 進行編譯，編譯通過後點擊 Flash 進行燒錄。
 
 斷開 USB 連接線進行硬體冷開機，隨後重新通電，即可在 OLED 螢幕上實時觀測馬達運轉狀態與 AI 異常分數。
-"""
